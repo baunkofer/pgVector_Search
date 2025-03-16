@@ -6,7 +6,19 @@ import psycopg2
 import io
 import pandas as pd
 import numpy as np
+from psycopg2 import sql
 
+
+def select_all_from_table(table_name: str, cur: psycopg2.extensions.cursor):
+    # Sichere Abfrage mit sql.Identifier (verhindert SQL-Injection)
+    query = sql.SQL("SELECT * FROM public.{}").format(sql.Identifier(table_name))
+
+    cur.execute(query)
+    rows = cur.fetchall()  # Alle Zeilen abrufen
+    
+    print(f"✅ {len(rows)} rows retrieved from {table_name}")
+    for row in rows[:5]:  # Zeige die ersten 5 Zeilen
+        print(row)
 
 def query(query_string: str, cursor: psycopg2.extensions.cursor) -> list:
 
@@ -38,28 +50,28 @@ def create_table(table_name: str, conn: psycopg2.extensions.connection, cur: psy
     # SQL-Statement
     sql = f"""
     CREATE TABLE IF NOT EXISTS public.{table_name} (
-        company VARCHAR(255),
-        fiscal_year VARCHAR(255),
-        document VARCHAR(255),
-        line_item VARCHAR(255),
-        account_number VARCHAR(255),
-        account_name VARCHAR(255),
-        posting_date DATE,
-        recording_date DATE,
-        document_date DATE,
-        document_type VARCHAR(255),
-        user VARCHAR(255),
-        user_type VARCHAR(255),
-        local_currency NUMERIC,
-        document_currency NUMERIC,
-        source VARCHAR(255),
-        posting_text VARCHAR(255),
-        debit NUMERIC,
-        credit NUMERIC,
-        debit_Ddc NUMERIC,
-        credit_dc NUMERIC,
-        manual_automatic_posting VARCHAR(255),
-        intercompany_partner VARCHAR(255)
+        "company" VARCHAR(255),
+        "fiscal_year" VARCHAR(255),
+        "document" VARCHAR(255),
+        "line_item" VARCHAR(255),
+        "account_number" VARCHAR(255),
+        "account_name" VARCHAR(255),
+        "posting_date" DATE,
+        "recording_date" DATE,
+        "document_date" DATE,
+        "document_type" VARCHAR(255),
+        "user" VARCHAR(255),
+        "user_type" VARCHAR(255),
+        "local_currency" VARCHAR(10),
+        "document_currency" VARCHAR(10),
+        "source" VARCHAR(255),
+        "posting_text" VARCHAR(255),
+        "debit" NUMERIC,
+        "credit" NUMERIC,
+        "debit_dc" NUMERIC,
+        "credit_dc" NUMERIC,
+        "manual_automatic_posting" VARCHAR(255),
+        "intercompany_partner" VARCHAR(255)
     );
     """
 
@@ -68,7 +80,7 @@ def create_table(table_name: str, conn: psycopg2.extensions.connection, cur: psy
     # Tabelle erstellen
     cur.execute(sql)
     conn.commit()
-    print("Table 'usr_journal_old_GL' has been created (or already exists).")
+    print(f"Table '{table_name}' has been created (or already exists).")
 
 
 def import_datatable(file_path: str, table_name: str, conn: psycopg2.extensions.connection, cur: psycopg2.extensions.cursor) -> None:
@@ -76,7 +88,7 @@ def import_datatable(file_path: str, table_name: str, conn: psycopg2.extensions.
     # Convert DataFrame to CSV format in memory
     csv_buffer = io.StringIO()
     df = pd.read_csv(file_path, delimiter = ',', header=0, quotechar='"', quoting=1, encoding='utf-8')
-    df.to_csv(csv_buffer, index=False, header=False)
+    df.to_csv(csv_buffer, index=False, header=False, sep="|")
     csv_buffer.seek(0)
 
     print(df.columns)
@@ -87,7 +99,7 @@ def import_datatable(file_path: str, table_name: str, conn: psycopg2.extensions.
 
     # Use COPY FROM to insert data
     try:
-        cur.copy_from(csv_buffer, table_name, sep=",", columns=('company', 
+        cur.copy_from(csv_buffer, table_name, sep="|", columns=('company', 
                                                                 'fiscal_year', 
                                                                 'document', 
                                                                 'line_item', 
@@ -105,7 +117,7 @@ def import_datatable(file_path: str, table_name: str, conn: psycopg2.extensions.
                                                                 'posting_text', 
                                                                 'debit', 
                                                                 'credit',
-                                                                'debit_Ddc', 
+                                                                'debit_dc', 
                                                                 'credit_dc', 
                                                                 'manual_automatic_posting',
                                                                 'intercompany_partner'))
@@ -144,8 +156,14 @@ table_name = "usr_journal_old_gl"
 
 
 create_table(table_name, conn, cur)
+
+# Funktionsaufruf mit der gewünschten Tabelle
+select_all_from_table(table_name, cur)
+
 import_datatable(file_path, table_name, conn, cur)
 
+# Funktionsaufruf mit der gewünschten Tabelle
+select_all_from_table(table_name, cur)
 
 # Cursor und Verbindung schließen
 cur.close()
