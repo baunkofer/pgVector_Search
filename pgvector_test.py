@@ -20,9 +20,22 @@ def query(query_string: str, cursor: psycopg2.extensions.cursor) -> list:
 
 def create_table(table_name: str, conn: psycopg2.extensions.connection, cur: psycopg2.extensions.cursor) -> None:
     
+    
+    cur.execute("SET search_path TO public;") 
+    # Verify the table exists
+    cur.execute("""
+        SELECT table_name FROM information_schema.tables WHERE table_name = 'usr_journal_old_GL';
+    """)
+    table_exists = cur.fetchone()
+
+    if table_exists:
+        print("Table exists in the database.")
+    else:
+        print("Table still does not exist! Check permissions and schema.")
+
     # SQL-Statement
     sql = f"""
-    CREATE TABLE {table_name} (
+    CREATE TABLE IF NOT EXISTS public.{table_name} (
         Company VARCHAR(255),
         Fiscal_Year VARCHAR(255),
         Document VARCHAR(255)
@@ -32,6 +45,7 @@ def create_table(table_name: str, conn: psycopg2.extensions.connection, cur: psy
     # Tabelle erstellen
     cur.execute(sql)
     conn.commit()
+    print("Table 'usr_journal_old_GL' has been created (or already exists).")
 
 
 def import_datatable(file_path: str, table_name: str, conn: psycopg2.extensions.connection, cur: psycopg2.extensions.cursor) -> None:
@@ -42,9 +56,10 @@ def import_datatable(file_path: str, table_name: str, conn: psycopg2.extensions.
     df.to_csv(csv_buffer, index=False, header=False)
     csv_buffer.seek(0)
 
-    print(csv_buffer)
+    print(df.to_csv(csv_buffer, index=False, header=False))
 
     # Use COPY FROM to insert data into PostgreSQL
+    cur.execute("SET search_path TO public;") # Set the schema
     cur.copy_from(csv_buffer, table_name, sep=",", columns=("Company", "Fiscal_Year", "Document"))
 
     # Commit and close connection
