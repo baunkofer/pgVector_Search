@@ -24,9 +24,11 @@ def create_table(table_name: str, conn: psycopg2.extensions.connection, cur: psy
     cur.execute("SET search_path TO public;") 
     # Verify the table exists
     cur.execute("""
-        SELECT table_name FROM information_schema.tables WHERE table_name = 'usr_journal_old_GL';
+        SELECT table_name FROM information_schema.tables WHERE table_name = '{table_name}'
     """)
     table_exists = cur.fetchone()
+
+    print("->" + str(table_exists))
 
     if table_exists:
         print("Table exists in the database.")
@@ -36,11 +38,32 @@ def create_table(table_name: str, conn: psycopg2.extensions.connection, cur: psy
     # SQL-Statement
     sql = f"""
     CREATE TABLE IF NOT EXISTS public.{table_name} (
-        Company VARCHAR(255),
-        Fiscal_Year VARCHAR(255),
-        Document VARCHAR(255)
+        company VARCHAR(255),
+        fiscal_year VARCHAR(255),
+        document VARCHAR(255),
+        line_item VARCHAR(255),
+        account_number VARCHAR(255),
+        account_name VARCHAR(255),
+        posting_date DATE,
+        recording_date DATE,
+        document_date DATE,
+        document_type VARCHAR(255),
+        user VARCHAR(255),
+        user_type VARCHAR(255),
+        local_currency NUMERIC,
+        document_currency NUMERIC,
+        source VARCHAR(255),
+        posting_text VARCHAR(255),
+        debit NUMERIC,
+        credit NUMERIC,
+        debit_Ddc NUMERIC,
+        credit_dc NUMERIC,
+        manual_automatic_posting VARCHAR(255),
+        intercompany_partner VARCHAR(255)
     );
     """
+
+    print(sql)
 
     # Tabelle erstellen
     cur.execute(sql)
@@ -56,11 +79,43 @@ def import_datatable(file_path: str, table_name: str, conn: psycopg2.extensions.
     df.to_csv(csv_buffer, index=False, header=False)
     csv_buffer.seek(0)
 
-    print(df.to_csv(csv_buffer, index=False, header=False))
+    print(df.columns)
 
     # Use COPY FROM to insert data into PostgreSQL
     cur.execute("SET search_path TO public;") # Set the schema
-    cur.copy_from(csv_buffer, table_name, sep=",", columns=("Company", "Fiscal_Year", "Document"))
+    cur.execute(f"TRUNCATE TABLE {table_name};") # Clear the table
+
+    # Use COPY FROM to insert data
+    try:
+        cur.copy_from(csv_buffer, table_name, sep=",", columns=('company', 
+                                                                'fiscal_year', 
+                                                                'document', 
+                                                                'line_item', 
+                                                                'account_number',
+                                                                'account_name', 
+                                                                'posting_date', 
+                                                                'recording_date', 
+                                                                'document_date',
+                                                                'document_type', 
+                                                                'user', 
+                                                                'user_type', 
+                                                                'local_currency',
+                                                                'document_currency', 
+                                                                'source', 
+                                                                'posting_text', 
+                                                                'debit', 
+                                                                'credit',
+                                                                'debit_Ddc', 
+                                                                'credit_dc', 
+                                                                'manual_automatic_posting',
+                                                                'intercompany_partner'))
+ 
+        conn.commit()
+        print("✅ Data imported successfully!")
+ 
+    except Exception as e:
+        conn.rollback()
+        print(f"❌ Error during COPY FROM: {e}")
 
     # Commit and close connection
     conn.commit()
@@ -85,9 +140,11 @@ type(cur)
 
 
 file_path = "/home/aunkofer/aunkofer/SAP/SAP_ECC_old_GL_Ergebnisse/result_usr_journal_old_GL.csv"
+table_name = "usr_journal_old_gl"
 
-create_table("usr_journal_old_GL", conn, cur)
-import_datatable(file_path, "usr_journal_old_GL", conn, cur)
+
+create_table(table_name, conn, cur)
+import_datatable(file_path, table_name, conn, cur)
 
 
 # Cursor und Verbindung schließen
