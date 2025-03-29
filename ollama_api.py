@@ -1,4 +1,7 @@
+import pandas as pd
 import requests
+from tqdm import tqdm
+
 
 class OllamaClient:
     def __init__(self, model: str = "llama3.2", host: str = "http://localhost:11434"):
@@ -60,7 +63,31 @@ class OllamaClient:
         else:
             print(f"Fehler beim Abrufen des Embeddings: {response.status_code} - {response.text}")
             return None
+    
 
+    def embed_dataframe(self, df: pd.DataFrame, text_column: str, embedding_column: str = "embedding") -> pd.DataFrame:
+        """
+        Fügt einem DataFrame eine Spalte mit Embeddings hinzu.
+
+        Args:
+            df (pd.DataFrame): Eingabedaten mit Text.
+            text_column (str): Name der Spalte, die den Text enthält.
+            client: Instanz von OllamaClient (mit get_embedding()).
+            embedding_column (str): Name der neuen Spalte für Embeddings.
+
+        Returns:
+            pd.DataFrame: Original-DF mit zusätzlicher Embedding-Spalte.
+        """
+        embeddings = []
+        for text in tqdm(df[text_column], desc="🔄 Embedding wird berechnet"):
+            embedding = self.get_embedding(text)
+            if embedding:
+                embeddings.append(embedding)
+            else:
+                embeddings.append(None)
+
+        df[embedding_column] = embeddings
+        return df
 
 def start_chat(client: OllamaClient):
 
