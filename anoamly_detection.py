@@ -1,16 +1,24 @@
 # pip install psycopg2-binary
 
 import os
-import psycopg2
+import psycopg
 import io
 import pandas as pd
 import numpy as np
+import logging
 from ollama_api import OllamaClient
 from pandas import DataFrame
-from psycopg2 import sql
+from psycopg import Connection
+from psycopg.errors import DatabaseError
+from pandas import DataFrame
+from psycopg import sql
+from pgvector.psycopg import register_vector
 
 
-def select_all_from_table(table_name: str, cur: psycopg2.extensions.cursor):
+def select_all_from_table(table_name: str, conn: psycopg.connection):
+    
+    cur = conn.cursor()
+    
     # Sichere Abfrage mit sql.Identifier (verhindert SQL-Injection)
     query = sql.SQL("SELECT * FROM public.{}").format(sql.Identifier(table_name))
 
@@ -24,7 +32,7 @@ def select_all_from_table(table_name: str, cur: psycopg2.extensions.cursor):
 
         print(row)
 
-def query(query_string: str, cursor: psycopg2.extensions.cursor) -> list:
+def query(query_string: str, cursor: psycopg.cursor) -> list:
 
     cursor.execute(query_string)
     conn.commit()
@@ -33,16 +41,20 @@ def query(query_string: str, cursor: psycopg2.extensions.cursor) -> list:
 
     return rows
 
-def delete_table(table_name: str, conn: psycopg2.extensions.connection, cur: psycopg2.extensions.cursor) -> None:
+def delete_table(table_name: str, conn: psycopg.connection) -> None:
     
+    cur = conn.cursor()
+
     cur.execute(f"DROP TABLE IF EXISTS {table_name};")
     conn.commit()
     print(f"Table '{table_name}' has been deleted (or did not exist).") 
 
 
 
-def create_table(conn: psycopg2.extensions.connection, table_name: str, cur: psycopg2.extensions.cursor) -> None:
+def create_table(conn: psycopg.connection, table_name: str) -> None:
     
+    cur = conn.cursor()
+
     cur.execute("SET search_path TO public;") 
     # Verify the table exists
     cur.execute("""
@@ -70,7 +82,6 @@ def create_table(conn: psycopg2.extensions.connection, table_name: str, cur: psy
         "recording_date" DATE,
         "document_date" DATE,
         "document_type" VARCHAR(255),
-        "user" VARCHAR(255),
         "user_type" VARCHAR(255),
         "local_currency" VARCHAR(10),
         "document_currency" VARCHAR(10),
@@ -81,7 +92,20 @@ def create_table(conn: psycopg2.extensions.connection, table_name: str, cur: psy
         "debit_dc" NUMERIC,
         "credit_dc" NUMERIC,
         "manual_automatic_posting" VARCHAR(255),
-        "intercompany_partner" VARCHAR(255)
+        "intercompany_partner" VARCHAR(255),
+        "Posting_Date_new" DATE, 
+        "Recording_Date_new" DATE,
+        "Document_Date_new" DATE, 
+        "year_posting" INTEGER,
+        "month_posting" INTEGER,
+        "weekday_posting" INTEGER,
+        "year_recording" INTEGER,
+        "month_recording" INTEGER,
+        "weekday_recording" INTEGER,
+        "year_document" INTEGER,
+        "month_document" INTEGER,
+        "weekday_document" INTEGER
+
     );
     """
 
@@ -93,57 +117,46 @@ def create_table(conn: psycopg2.extensions.connection, table_name: str, cur: psy
     print(f"Table '{table_name}' has been created (or already exists).")
 
 
-def import_datatable(data_table: DataFrame, table_name: str, conn: psycopg2.extensions.connection, cur: psycopg2.extensions.cursor) -> None:
-
-    # Convert DataFrame to CSV format in memory
-    csv_buffer = io.StringIO()
+def import_datatable(data_table: DataFrame, table_name: str, conn: Connection) -> None:
+    logger = logging.getLogger(__name__)
     
-    data_table.to_csv(csv_buffer, index=False, header=False, sep="|")
-    csv_buffer.seek(0)
-
-    print(data_table.columns)
-
-    # Use COPY FROM to insert data into PostgreSQL
-    cur.execute("SET search_path TO public;") # Set the schema
-    cur.execute(f"TRUNCATE TABLE {table_name};") # Clear the table
-
-    # Use COPY FROM to insert data
+    columns = [
+        'Company', 'Fiscal_Year', 'Document', 'Line_Item', 'Account_Number', 
+        'Account_Name', 'Posting_Date', 'Recording_Date', 'Document_Date', 
+        'Document_Type', 'User_Type', 'Local_Currency', 
+        'Document_Currency', 'Source', 'Posting_Text', 'Debit', 'Credit', 
+        'Debit_DC', 'Credit_DC', 'Manual_Automatic_Posting', 
+        'Intercompany_Partner', '"Posting_Date_new"', '"Recording_Date_new"', 
+        '"Document_Date_new"', 'year_posting', 'month_posting', 'weekday_posting', 
+        'year_recording', 'month_recording', 'weekday_recording', 
+        'year_document', 'month_document', 'weekday_document'
+    ]
+    
+    # Sicherheitsprüfung auf Spaltenvollständigkeit
+    missing_cols = [col for col in columns if col not in data_table.columns]
+    if missing_cols:
+        raise ValueError(f"Missing columns in data_table: {missing_cols}")
+    
+    # Tabellenname prüfen – einfache Absicherung gegen Missbrauch
+    if not table_name.isidentifier():
+        raise ValueError(f"Invalid table name: {table_name}")
+    
+    placeholders = ", ".join(["%s"] * len(columns))
+    insert_sql = f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({placeholders})"
+    
+    data = [tuple(row[col] for col in columns) for row in data_table.to_dict(orient='records')]
+    
     try:
-        cur.copy_from(csv_buffer, table_name, sep="|", columns=('company', 
-                                                                'fiscal_year', 
-                                                                'document', 
-                                                                'line_item', 
-                                                                'account_number',
-                                                                'account_name', 
-                                                                'posting_date', 
-                                                                'recording_date', 
-                                                                'document_date',
-                                                                'document_type', 
-                                                                'user', 
-                                                                'user_type', 
-                                                                'local_currency',
-                                                                'document_currency', 
-                                                                'source', 
-                                                                'posting_text', 
-                                                                'debit', 
-                                                                'credit',
-                                                                'debit_dc', 
-                                                                'credit_dc', 
-                                                                'manual_automatic_posting',
-                                                                'intercompany_partner'))
- 
+        with conn.cursor() as cur:
+            cur.executemany(insert_sql, data)
         conn.commit()
-        print("✅ Data imported successfully!")
- 
-    except Exception as e:
+        logger.info("✅ Data inserted into table '%s' successfully.", table_name)
+    
+    except DatabaseError as e:
         conn.rollback()
-        print(f"❌ Error during COPY FROM: {e}")
+        logger.error("❌ Database error during import: %s", e)
 
-    # Commit and close connection
-    conn.commit()
-
-
-def create_document_vector_table(conn: psycopg2.extensions.connection, table_name: str = "vector_store", amount_columns: int = 1, vector_dimensions: int = 1536):
+def create_document_vector_table(conn: psycopg.connection, table_name: str = "vector_store", amount_columns: int = 1, vector_dimensions: int = 1536):
     """
     Erstellt die Tabelle 'documents' mit pgvector-Spalte, falls sie nicht existiert.
 
@@ -162,12 +175,13 @@ def create_document_vector_table(conn: psycopg2.extensions.connection, table_nam
             );
             
         """)
-        cur.execute(create_table_query, [vector_dimensions])
+        cur.execute(create_table_query)
+        #cur.execute(create_table_query, [vector_dimensions])
         conn.commit()
         print("✅ Tabelle 'documents' wurde erstellt (oder existierte bereits).")
 
 
-def insert_vectors_to_db(dataset: DataFrame, vectors: np.ndarray, conn: psycopg2.extensions.connection, table_name: str = "vector_store", create_index = False, debug = False) -> None:
+def insert_vectors_to_db(dataset: DataFrame, vectors: np.ndarray, conn: psycopg.connection, table_name: str = "vector_store", create_index = False, debug = False) -> None:
     cur = conn.cursor()
 
     for i, row in dataset[features].iterrows():
@@ -221,7 +235,7 @@ def detect_anomalies(conn, table_name = "vector_store", limit = 10000) -> list:
     return anomalies
 
 # Verbindung zur PostgreSQL-Datenbank
-conn = psycopg2.connect(
+conn = psycopg.connect(
     dbname=os.environ.get("DATABASE"),
     user=os.environ.get("USER"),
     password=os.environ.get("PASSWORD"),
@@ -231,6 +245,7 @@ conn = psycopg2.connect(
 
 # Cursor erstellen
 cur = conn.cursor()
+register_vector(conn)
 
 type(cur)
 
@@ -244,19 +259,36 @@ table_name = "usr_journal_old_gl"
 
 dataset = pd.read_csv(file_path, delimiter = ',', header=0, quotechar='"', quoting=1, encoding='utf-8')
 
-#dataset = dataset.iloc[:300, :]
+# Angenommen, df['document_date'] sieht so aus: "2000-04-17"
+dataset['Posting_Date_new'] = pd.to_datetime(dataset['Posting_Date'], format='%Y-%m-%d')
+dataset['Recording_Date_new'] = pd.to_datetime(dataset['Recording_Date'], format='%Y-%m-%d')
+dataset['Document_Date_new'] = pd.to_datetime(dataset['Document_Date'], format='%Y-%m-%d')
 
-delete_table(table_name, conn, cur)
+dataset['year_posting'] = dataset['Posting_Date_new'].dt.year
+dataset['month_posting'] = dataset['Posting_Date_new'].dt.month
+dataset['weekday_posting'] = dataset['Posting_Date_new'].dt.weekday  # 0 = Montag, 6 = Sonntag
 
-create_table(conn, table_name, cur)
+dataset['year_recording'] = dataset['Recording_Date_new'].dt.year
+dataset['month_recording'] = dataset['Recording_Date_new'].dt.month
+dataset['weekday_recording'] = dataset['Recording_Date_new'].dt.weekday  # 0 = Montag, 6 = Sonntag
 
-import_datatable(dataset, table_name, conn, cur)
+dataset['year_document'] = dataset['Document_Date_new'].dt.year
+dataset['month_document'] = dataset['Document_Date_new'].dt.month
+dataset['weekday_document'] = dataset['Document_Date_new'].dt.weekday  # 0 = Montag, 6 = Sonntag
+
+dataset.rename(columns={"DocumentCurrency": "Document_Currency"}, inplace=True)
+
+delete_table(table_name, conn)
+
+create_table(conn, table_name)
+
+import_datatable(dataset, table_name, conn)
 
 # Funktionsaufruf mit der gewünschten Tabelle
-select_all_from_table(table_name, cur)
+select_all_from_table(table_name, conn)
 
 # Delete table
-delete_table("vector_store", conn, cur)
+delete_table("vector_store", conn)
 
 columns = ['Company', 'Fiscal_Year', 'Document', 'Line_Item', 'Account_Number',
             'Account_Name', 'Posting_Date', 'Recording_Date', 'Document_Date',
@@ -275,7 +307,7 @@ for column in dataset.columns:
 ollama = OllamaClient(model="llama3.2")
 
 # Spalten für Vektor auswählen
-features_normal_vectors = ['Company', 'Fiscal_Year', 'Document', 'Line_Item', 'Account_Number']
+features_normal_vectors = ['Company', 'Fiscal_Year', 'Document', 'Line_Item', 'Account_Number', 'year_document', 'year_posting', 'month_posting', 'weekday_posting','Debit', 'Credit', 'Debit_DC', 'Credit_DC']
 features_embeddings = [] # ['Posting_Text_embedding']
 features = features_normal_vectors + features_embeddings
 
@@ -287,11 +319,12 @@ dataset['Posting_Text_embedding'] = posting_text_embedding['Posting_Text_embeddi
 
 vectors = dataset[features_normal_vectors].fillna(0).to_numpy().astype(np.float64)
 
+"""
 create_document_vector_table(conn, table_name="vector_store", amount_columns=len(features), vector_dimensions = vectors)
 
 insert_vectors_to_db(dataset, vectors, conn, table_name="vector_store", debug=False)
 
-anomalies = detect_anomalies(conn, table_name="vector_store")
+anomalies = detect_anomalies(conn, table_name="vector_store", limit=10)
 
 
 print("Anomalies:")
@@ -304,6 +337,8 @@ print(dataset.columns)
 cur.close()
 conn.close()
 
+
+"""
 
 """
 Vector Operations on pgVector:
